@@ -10,11 +10,15 @@ using System.Threading.Tasks;
 using System.Windows.Forms;
 using Word = Microsoft.Office.Interop.Word;
 using Microsoft.Win32;
+using static System.Windows.Forms.VisualStyles.VisualStyleElement;
+using System.Diagnostics;
 
 namespace WordPDFConvertor
 {
     public partial class Form1 : Form
     {
+        private List<FileToConvert> filesToConvert = new List<FileToConvert>();
+
         public Form1()
         {
             InitializeComponent();
@@ -23,89 +27,88 @@ namespace WordPDFConvertor
         public void AddFiles(string[] files)
         {
             files = files.Where(f => f.EndsWith(".docx") || f.EndsWith(".doc")).ToArray();
-            lbFiles.Items.AddRange(files);
+
+            filesToConvert.AddRange(files.Select(f => new FileToConvert(f, UpdateListViewInvoker)));
+            UpdateListView();
         }
 
-        private void lbFiles_DragLeave(object sender, EventArgs e)
+        private void UpdateListViewInvoker() 
         {
-            lbFiles.BackColor = Color.White;
+            if (InvokeRequired)
+            {
+                Invoke((Action)(() => {
+                    UpdateListView();
+                }));
+            }
+            else
+            {
+                UpdateListView();
+            }
         }
 
-        private void lbFiles_DragEnter(object sender, DragEventArgs e)
+        private void UpdateListView()
+        {   
+            lvFiles.Items.Clear();
+            foreach (var f in filesToConvert)
+            {
+                lvFiles.Items.Add(f.ToListViewItem());
+            }
+            
+        }
+
+        private async void bConvert_Click(object sender, EventArgs e)
+        {
+            var app = new Word.Application();
+            
+            var tasks = filesToConvert.Select(f => f.Convert(
+                    app,
+                    (int)nudFrom.Value,
+                    (int)nudTo.Value,
+                    tbBegining.Text,
+                    tbEnd.Text,
+                    cbAddPageNumbers.Checked
+                    )); 
+            await Task.WhenAll(tasks);
+            app.Quit();
+        }
+
+
+        private void bClear_Click(object sender, EventArgs e)
+        {
+            filesToConvert.Clear();
+            UpdateListView();
+        }
+
+        private void lvFiles_DragLeave(object sender, EventArgs e)
+        {
+            lvFiles.BackColor = Color.White;
+        }
+
+        private void lvFiles_DragEnter(object sender, DragEventArgs e)
         {
             if (e.Data.GetDataPresent(DataFormats.FileDrop))
             {
-                lbFiles.BackColor = Color.DeepSkyBlue;
+                lvFiles.BackColor = Color.DeepSkyBlue;
                 e.Effect = DragDropEffects.Copy;
             }
         }
 
-        private void lbFiles_DragDrop(object sender, DragEventArgs e)
+        private void lvFiles_DragDrop(object sender, DragEventArgs e)
         {
             string[] files = (string[])e.Data.GetData(DataFormats.FileDrop);
             AddFiles(files);
 
-            lbFiles.BackColor = Color.White;
+            lvFiles.BackColor = Color.White;
         }
 
-        private void bConvert_Click(object sender, EventArgs e)
+        private void lvFiles_DoubleClick(object sender, EventArgs e)
         {
-            var app = new Word.Application();
-            foreach (string file in lbFiles.Items)
+            var location = lvFiles.SelectedItems[0].SubItems[2].Text;
+            if(File.Exists(location))
             {
-                if (File.Exists(file))
-                {
-                    var document = app.Documents.Open(file);
-
-                    Word.WdStatistic PagesCountStat = Word.WdStatistic.wdStatisticPages;
-                    int pagesCount = document.ComputeStatistics(PagesCountStat);
-                    var (from, to) = GetRange(pagesCount);
-                    string saveAs = $"{document.Path}\\{from}-{to} {document.Name}".Replace(".docx", ".pdf").Replace(".doc", ".pdf");
-                    
-                    document.ExportAsFixedFormat(
-                        saveAs,
-                        Word.WdExportFormat.wdExportFormatPDF,
-                        Range:Word.WdExportRange.wdExportFromTo,
-                        From:from,
-                        To:to
-                    );
-
-                    document.Close();        
-                }
+                string argument = "/select, \"" + location + "\"";
+                Process.Start("explorer.exe", argument);
             }
-            app.Quit();
-        }
-
-        private Tuple<int, int> GetRange(int pagesCount)
-        {
-            int from = (int)nudFrom.Value;
-            int to = (int)nudTo.Value;
-
-            if (to == 0)
-                to = pagesCount;
-
-            if (to < 0 && to > -pagesCount)
-                to = pagesCount + to;
-
-            if (to < -pagesCount)
-                to = pagesCount;
-
-            if (from > pagesCount)
-                from = 1;
-
-            if (from >= to)
-            {
-                from = 1;
-                to = pagesCount;
-            }
-            
-
-            return new Tuple<int, int>(from, to);
-        }
-
-        private void bClear_Click(object sender, EventArgs e)
-        {
-            lbFiles.Items.Clear();
         }
     }
 }
